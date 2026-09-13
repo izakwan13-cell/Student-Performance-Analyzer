@@ -2,19 +2,29 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(page_title="School Admin Dashboard", layout="wide")
-st.title("🏫 Student Categorization & Teacher Workload Portal")
+st.title("🏫 Student Categorization & Actionable Teacher Workload")
 
-# File Upload Section
 uploaded_file = st.sidebar.file_uploader("Upload Student XLSX", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     
-    # Check if 'Teacher' column exists, otherwise assign default
-    if "Teacher" not in df.columns:
-        df["Teacher"] = "Unassigned"
+    # 1. Column Auto-Detection / User Selection
+    def get_column(options, default_label):
+        for col in df.columns:
+            if str(col).strip().lower() in options:
+                return col
+        return st.sidebar.selectbox(f"Select '{default_label}' Column:", df.columns)
 
-    # 1. Student Categorization Logic
+    teacher_col = get_column(["teacher", "teacher name", "class teacher", "educator", "instructor"], "Teacher")
+    subject_col = get_column(["subject", "course", "class", "module"], "Subject")
+    name_col = get_column(["student name", "name", "student", "full name"], "Student Name")
+
+    df["Teacher_Clean"] = df[teacher_col].fillna("Unassigned")
+    df["Subject_Clean"] = df[subject_col].fillna("General")
+    df["Name_Clean"] = df[name_col].fillna("Unknown Student")
+
+    # 2. Student Categorization Logic
     def categorize(row):
         score = row.get("Average / Overall Score", 0)
         attendance = row.get("Attendance Band", 0)
@@ -28,7 +38,7 @@ if uploaded_file is not None:
 
     df["Attention Level"] = df.apply(categorize, axis=1)
 
-    # 2. Overall Summary Metrics Cards
+    # 3. Overall Summary Metrics
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Students", len(df))
     col2.metric("🚨 High Attention", len(df[df["Attention Level"].str.contains("High")]))
@@ -37,41 +47,45 @@ if uploaded_file is not None:
 
     st.markdown("---")
 
-    # 3. Dedicated Tabs View
-    tab1, tab2 = st.tabs(["👩‍🏫 Teacher Intervention Workload", "📋 Full Student List"])
+    # 4. Tabs View
+    tab1, tab2 = st.tabs(["👩‍🏫 Teacher & Subject Student Rosters", "📋 Full Student Dataset"])
 
     with tab1:
-        st.subheader("Teacher Workload Breakdown")
+        st.subheader("Students Requiring Intervention (Grouped by Teacher & Subject)")
         
-        # Group data by Teacher and count Attention Levels
-        teacher_summary = df.groupby(["Teacher", "Attention Level"]).size().unstack(fill_value=0)
-        
-        # Ensure all category columns exist in table
-        for category in ["🚨 High Attention Required", "🟡 Moderate Monitoring", "🌟 Excellent (Minimal Attention)"]:
-            if category not in teacher_summary.columns:
-                teacher_summary[category] = 0
+        # Filter for high-attention students only
+        high_attention_df = df[df["Attention Level"].str.contains("High")]
 
-        # Sort teachers by who has the most "High Attention Required" students
-        teacher_summary["Total Students"] = teacher_summary.sum(axis=1)
-        teacher_summary = teacher_summary.sort_values(by="🚨 High Attention Required", ascending=False)
-        
-        # Display aggregated summary table
-        st.dataframe(
-            teacher_summary[["🚨 High Attention Required", "🟡 Moderate Monitoring", "🌟 Excellent (Minimal Attention)", "Total Students"]],
-            use_container_width=True
-        )
-
-        # High priority highlight alert
-        top_teacher = teacher_summary.index[0]
-        high_count = teacher_summary.loc[top_teacher, "🚨 High Attention Required"]
-        st.error(f"⚠️ **Attention Needed:** **{top_teacher}** has the highest number of intervention-level students ({high_count} High Attention students).")
+        if high_attention_df.empty:
+            st.success("🎉 No students currently require high-attention intervention!")
+        else:
+            # Group by Teacher
+            teachers = high_attention_df["Teacher_Clean"].unique()
+            
+            for teacher in teachers:
+                teacher_df = high_attention_df[high_attention_df["Teacher_Clean"] == teacher]
+                total_teacher_high = len(teacher_df)
+                
+                # Expandable card per teacher
+                with st.expander(f"👩‍🏫 **{teacher}** — {total_teacher_high} Student(s) Needing Attention", expanded=True):
+                    
+                    # Group by Subject under each teacher
+                    subjects = teacher_df["Subject_Clean"].unique()
+                    
+                    for subject in subjects:
+                        subject_df = teacher_df[teacher_df["Subject_Clean"] == subject]
+                        st.markdown(f"#### 📘 Subject: **{subject}** ({len(subject_df)} students)")
+                        
+                        # Display table of student names and metrics for that subject
+                        st.dataframe(
+                            subject_df[[name_col, "Average / Overall Score", "Attendance Band", "Attention Level"]],
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
     with tab2:
-        st.subheader("Filter Students by Teacher")
-        selected_teacher = st.selectbox("Select Teacher", ["All"] + list(df["Teacher"].unique()))
-        
-        filtered_df = df if selected_teacher == "All" else df[df["Teacher"] == selected_teacher]
-        st.dataframe(filtered_df, use_container_width=True)
+        st.subheader("Complete Data View")
+        st.dataframe(df, use_container_width=True)
 
 else:
-    st.info("👈 Upload an Excel file via the sidebar to view student categorizations and teacher workloads.")
+    st.info("👈 Upload an Excel file via the sidebar to view student categorizations and intervention rosters.")

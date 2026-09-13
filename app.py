@@ -1,28 +1,34 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="School Admin Dashboard", layout="wide")
-st.title("🏫 Student Categorization & Actionable Teacher Workload")
+st.set_page_config(page_title="All-Subject Teacher Workload Portal", layout="wide")
+st.title("🏫 Multi-Subject Student Categorization & Teacher Assignment")
+
+# Sidebar Teacher Pool Setup
+st.sidebar.header("Teacher Roster Pool")
+teacher_input = st.sidebar.text_area(
+    "Available Teachers (one per line):", 
+    value="Mr. John\nMs. Sarah\nDr. Alex\nMrs. Lee\nMr. David"
+)
+available_teachers = [t.strip() for t in teacher_input.split("\n") if t.strip()]
 
 uploaded_file = st.sidebar.file_uploader("Upload Student XLSX", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     
-    # 1. Column Auto-Detection / User Selection
-    def get_column(options, default_label):
-        for col in df.columns:
-            if str(col).strip().lower() in options:
-                return col
-        return st.sidebar.selectbox(f"Select '{default_label}' Column:", df.columns)
-
-    teacher_col = get_column(["teacher", "teacher name", "class teacher", "educator", "instructor"], "Teacher")
-    subject_col = get_column(["subject", "course", "class", "module"], "Subject")
-    name_col = get_column(["student name", "name", "student", "full name"], "Student Name")
-
-    df["Teacher_Clean"] = df[teacher_col].fillna("Unassigned")
-    df["Subject_Clean"] = df[subject_col].fillna("General")
-    df["Name_Clean"] = df[name_col].fillna("Unknown Student")
+    # 1. Automatic Column Identification
+    name_col = next((c for c in df.columns if "name" in str(c).lower() or "student" in str(c).lower()), df.columns[0])
+    subject_col = next((c for c in df.columns if "subject" in str(c).lower() or "course" in str(c).lower() or "class" in str(c).lower()), None)
+    
+    df["Student Name"] = df[name_col]
+    
+    # Check if subject column exists, otherwise inform user
+    if subject_col:
+        df["Subject"] = df[subject_col]
+    else:
+        st.sidebar.warning("⚠️ No 'Subject' column detected automatically.")
+        df["Subject"] = st.sidebar.selectbox("Select Subject Column:", df.columns)
 
     # 2. Student Categorization Logic
     def categorize(row):
@@ -38,54 +44,63 @@ if uploaded_file is not None:
 
     df["Attention Level"] = df.apply(categorize, axis=1)
 
-    # 3. Overall Summary Metrics
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Students", len(df))
-    col2.metric("🚨 High Attention", len(df[df["Attention Level"].str.contains("High")]))
-    col3.metric("🟡 Moderate", len(df[df["Attention Level"].str.contains("Moderate")]))
-    col4.metric("🌟 Excellent", len(df[df["Attention Level"].str.contains("Excellent")]))
+    # 3. Auto-Assign Teachers Per Subject for High-Attention Students
+    df["Assigned Teacher"] = "Unassigned"
+    
+    if len(available_teachers) > 0:
+        # Loop through each subject independently and distribute high attention students round-robin
+        for subject, subject_group in df.groupby("Subject"):
+            high_attention_idx = subject_group[subject_group["Attention Level"].str.contains("High")].index
+            
+            for i, idx in enumerate(high_attention_idx):
+                assigned = available_teachers[i % len(available_teachers)]
+                df.loc[idx, "Assigned Teacher"] = assigned
+
+    # 4. Summary Metrics
+    high_att_total = len(df[df["Attention Level"].str.contains("High")])
+    subjects_count = df["Subject"].nunique()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Records", len(df))
+    col2.metric("Subjects Tracked", subjects_count)
+    col3.metric("🚨 Total High Attention Needs", high_att_total)
 
     st.markdown("---")
 
-    # 4. Tabs View
-    tab1, tab2 = st.tabs(["👩‍🏫 Teacher & Subject Student Rosters", "📋 Full Student Dataset"])
+    # 5. Dynamic Tabs: View by Subject or View by Assigned Teacher
+    tab1, tab2 = st.tabs(["📘 Breakdown by Subject (All 9 Subjects)", "👩‍🏫 Breakdown by Assigned Teacher"])
 
     with tab1:
-        st.subheader("Students Requiring Intervention (Grouped by Teacher & Subject)")
+        st.subheader("Subject-Wise Intervention Lists")
+        all_subjects = df["Subject"].unique()
         
-        # Filter for high-attention students only
-        high_attention_df = df[df["Attention Level"].str.contains("High")]
-
-        if high_attention_df.empty:
-            st.success("🎉 No students currently require high-attention intervention!")
-        else:
-            # Group by Teacher
-            teachers = high_attention_df["Teacher_Clean"].unique()
+        for subj in all_subjects:
+            subj_df = df[(df["Subject"] == subj) & (df["Attention Level"].str.contains("High"))]
             
-            for teacher in teachers:
-                teacher_df = high_attention_df[high_attention_df["Teacher_Clean"] == teacher]
-                total_teacher_high = len(teacher_df)
-                
-                # Expandable card per teacher
-                with st.expander(f"👩‍🏫 **{teacher}** — {total_teacher_high} Student(s) Needing Attention", expanded=True):
-                    
-                    # Group by Subject under each teacher
-                    subjects = teacher_df["Subject_Clean"].unique()
-                    
-                    for subject in subjects:
-                        subject_df = teacher_df[teacher_df["Subject_Clean"] == subject]
-                        st.markdown(f"#### 📘 Subject: **{subject}** ({len(subject_df)} students)")
-                        
-                        # Display table of student names and metrics for that subject
-                        st.dataframe(
-                            subject_df[[name_col, "Average / Overall Score", "Attendance Band", "Attention Level"]],
-                            use_container_width=True,
-                            hide_index=True
-                        )
+            with st.expander(f"📚 **{subj}** — {len(subj_df)} High Attention Student(s)", expanded=False):
+                if not subj_df.empty:
+                    st.dataframe(
+                        subj_df[["Student Name", "Assigned Teacher", "Average / Overall Score", "Attendance Band", "Attention Level"]],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.success("🎉 No high-attention students in this subject!")
 
     with tab2:
-        st.subheader("Complete Data View")
-        st.dataframe(df, use_container_width=True)
+        st.subheader("Teacher Workload Overview Across All Subjects")
+        for teacher in available_teachers:
+            teacher_df = df[(df["Assigned Teacher"] == teacher) & (df["Attention Level"].str.contains("High"))]
+            
+            with st.expander(f"👩‍🏫 **{teacher}** — Assigned {len(teacher_df)} Student Task(s) Across Subjects", expanded=False):
+                if not teacher_df.empty:
+                    st.dataframe(
+                        teacher_df[["Student Name", "Subject", "Average / Overall Score", "Attendance Band", "Attention Level"]],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.write("No high-attention students assigned.")
 
 else:
-    st.info("👈 Upload an Excel file via the sidebar to view student categorizations and intervention rosters.")
+    st.info("👈 Upload your student Excel file via the sidebar to process all 9 subjects automatically.")

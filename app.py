@@ -28,11 +28,9 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.astype(str).str.strip()
 
-    # Detect Student Name Column
     name_col = next((c for c in df.columns if "name" in c.lower() or "student" in c.lower()), df.columns[0])
     df["Student Name"] = df[name_col]
 
-    # Detect global/overall attendance column if available as fallback
     global_att_col = next((c for c in df.columns if any(k in c.lower() for k in ["attendance", "kehadiran", "att_overall", "overall att"])), None)
 
     records = []
@@ -43,7 +41,6 @@ if uploaded_file is not None:
         for subj, teacher in subject_teachers.items():
             subj_clean = subj.lower()
             
-            # Find subject-specific score and attendance columns
             matching_cols = [
                 c for c in df.columns 
                 if subj_clean in c.lower() 
@@ -60,34 +57,29 @@ if uploaded_file is not None:
                 else:
                     score_col = col
 
-            # If no subject-specific attendance column found, use global attendance column
             if not att_col:
                 att_col = global_att_col
 
-            # Extract values
             score_val = row[score_col] if score_col and pd.notnull(row[score_col]) else None
             att_val = row[att_col] if att_col and pd.notnull(row[att_col]) else None
 
             if score_val is None:
                 continue
 
-            # Safe numeric conversion for Score
             try:
                 score = float(score_val)
             except (ValueError, TypeError):
                 score = 0.0
 
-            # Safe numeric conversion for Attendance (handles "85%", decimals, strings)
             try:
                 if isinstance(att_val, str):
                     att_val = att_val.replace("%", "").strip()
                 attendance = float(att_val)
                 if attendance <= 1.0 and attendance > 0:
-                    attendance = attendance * 100  # Convert decimal (0.85 -> 85)
+                    attendance = attendance * 100
             except (ValueError, TypeError):
                 attendance = 0.0
 
-            # Categorization Logic based on thresholds
             if score < 40 or attendance < 70:
                 level = "🚨 High Attention Required (<40)"
             elif score < 60:
@@ -102,12 +94,20 @@ if uploaded_file is not None:
                     "Student Name": student_name,
                     "Subject": subj,
                     "Assigned Teacher": teacher,
-                    "Score / Marks": score,
-                    "Attendance (%)": attendance,
+                    "Score / Marks": int(score) if score.is_integer() else score,
+                    "Attendance (%)": int(attendance) if attendance.is_integer() else attendance,
                     "Attention Level": level
                 })
 
     processed_df = pd.DataFrame(records)
+
+    # Column configuration to center-align all table contents
+    center_column_config = {
+        "Student Name": st.column_config.Column("Student Name", width="medium"),
+        "Score / Marks": st.column_config.NumberColumn("Score / Marks", alignment="center"),
+        "Attendance (%)": st.column_config.NumberColumn("Attendance (%)", alignment="center"),
+        "Attention Level": st.column_config.Column("Attention Level", width="large")
+    }
 
     # Summary Metrics
     high_count = len(processed_df[processed_df["Attention Level"].str.contains("High")]) if not processed_df.empty else 0
@@ -161,6 +161,7 @@ if uploaded_file is not None:
                     sorted_subj_df = subj_df.sort_values(by="Score / Marks", ascending=True)
                     st.dataframe(
                         sorted_subj_df[["Student Name", "Score / Marks", "Attendance (%)", "Attention Level"]], 
+                        column_config=center_column_config,
                         use_container_width=True, 
                         hide_index=True
                     )

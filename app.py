@@ -14,7 +14,7 @@ DEFAULT_TEACHER_MAPPING = {
     "English": "Ms. Emma",
     "History": "Mr. Robert",
     "Malay": "Pn. Nurul",
-    "Computer Science": "En. Hafiz"
+    "Islamic Education": "Ustaz Ahmad"
 }
 
 st.sidebar.header("⚙️ Subject-Teacher Mapping")

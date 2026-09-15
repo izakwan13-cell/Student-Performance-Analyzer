@@ -4,7 +4,7 @@ import pandas as pd
 st.set_page_config(page_title="School Admin Dashboard", layout="wide")
 st.title("🏫 9-Subject Student Categorization & Teacher Support Portal")
 
-# Fixed 9 Subjects mapped to Teachers
+# 9 Subjects mapped to Teachers
 SUBJECT_TEACHERS = {
     "Physics": "Dr. Alex",
     "Chemistry": "Ms. Sarah",
@@ -17,7 +17,6 @@ SUBJECT_TEACHERS = {
     "Islamic Education": "Ustaz Ahmad"
 }
 
-# Sidebar configuration
 st.sidebar.header("⚙️ Teacher Roster Mapping")
 subject_teachers = {}
 for subj, default_teacher in SUBJECT_TEACHERS.items():
@@ -29,21 +28,17 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.str.strip()
 
-    # Detect Student Name Column
     name_col = next((c for c in df.columns if "name" in str(c).lower() or "student" in str(c).lower()), df.columns[0])
     df["Student Name"] = df[name_col]
 
-    # Process High Attention Students across all columns
     records = []
     for idx, row in df.iterrows():
         student_name = row["Student Name"]
         
         for subj, teacher in subject_teachers.items():
-            # Find subject-related score & attendance columns flexibly
             score_col = next((c for c in df.columns if subj.lower() in str(c).lower() and ("score" in str(c).lower() or "mark" in str(c).lower() or "grade" in str(c).lower())), None)
             att_col = next((c for c in df.columns if subj.lower() in str(c).lower() and "attendance" in str(c).lower()), None)
             
-            # General fallback if subject names are directly in column headers
             if not score_col:
                 score_col = next((c for c in df.columns if subj.lower() in str(c).lower()), None)
             
@@ -55,58 +50,85 @@ if uploaded_file is not None:
             try: attendance = float(attendance)
             except: attendance = 100
 
-            if score < 50 or attendance < 70:
+            # Categorization Logic based on score thresholds
+            if score < 40 or attendance < 70:
+                level = "🚨 High Attention Required (<40)"
+            elif score < 60:
+                level = "🟡 Moderate Attention Required (<60)"
+            elif score < 80:
+                level = "🔵 Minimal Attention Needed (<80)"
+            else:
+                level = "🌟 Excellent / On Track"
+
+            if score < 80 or attendance < 70:
                 records.append({
                     "Student Name": student_name,
                     "Subject": subj,
                     "Assigned Teacher": teacher,
-                    "Score": score,
-                    "Attendance Band": attendance,
-                    "Attention Level": "🚨 High Attention Required"
+                    "Score / Marks": score,
+                    "Attendance (%)": attendance,
+                    "Attention Level": level
                 })
 
-    high_att_df = pd.DataFrame(records)
+    processed_df = pd.DataFrame(records)
 
-    # Top Metrics
-    col1, col2, col3 = st.columns(3)
+    # Top Summary Metrics
+    high_count = len(processed_df[processed_df["Attention Level"].str.contains("High")]) if not processed_df.empty else 0
+    mod_count = len(processed_df[processed_df["Attention Level"].str.contains("Moderate")]) if not processed_df.empty else 0
+    low_count = len(processed_df[processed_df["Attention Level"].str.contains("Minimal")]) if not processed_df.empty else 0
+
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Students Processed", len(df))
-    col2.metric("Subjects Tracked", len(subject_teachers))
-    col3.metric("🚨 Total High Attention Tasks", len(high_att_df))
+    col2.metric("🚨 High Attention (<40)", high_count)
+    col3.metric("🟡 Moderate Attention (<60)", mod_count)
+    col4.metric("🔵 Minimal Attention (<80)", low_count)
 
     st.markdown("---")
 
-    # Tabs
     tab1, tab2, tab3 = st.tabs([
         "👩‍🏫 Teacher Intervention Workload", 
-        "📚 Subject-Wise High Attention Rosters", 
+        "📚 Subject-Wise Rosters", 
         "📋 Full Dataset View"
     ])
 
     with tab1:
-        st.subheader("Teacher Intervention Workload Summary")
+        st.subheader("Teacher Intervention Workload Breakdown")
         teacher_summary = []
         
         for subj, teacher in subject_teachers.items():
-            count = len(high_att_df[high_att_df["Subject"] == subj]) if not high_att_df.empty else 0
+            subj_df = processed_df[processed_df["Subject"] == subj] if not processed_df.empty else pd.DataFrame()
+            
+            h_c = len(subj_df[subj_df["Attention Level"].str.contains("High")]) if not subj_df.empty else 0
+            m_c = len(subj_df[subj_df["Attention Level"].str.contains("Moderate")]) if not subj_df.empty else 0
+            l_c = len(subj_df[subj_df["Attention Level"].str.contains("Minimal")]) if not subj_df.empty else 0
+
             teacher_summary.append({
                 "Assigned Teacher": teacher,
                 "Subject Taught": subj,
-                "Students Needing Support": count
+                "🚨 High (<40)": h_c,
+                "🟡 Moderate (<60)": m_c,
+                "🔵 Minimal (<80)": l_c,
+                "Total Flagged Students": h_c + m_c + l_c
             })
 
-        summary_df = pd.DataFrame(teacher_summary).sort_values(by="Students Needing Support", ascending=False)
+        summary_df = pd.DataFrame(teacher_summary).sort_values(by="🚨 High (<40)", ascending=False)
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
     with tab2:
         st.subheader("Actionable Student Lists by Subject")
         for subj, teacher in subject_teachers.items():
-            subj_high = high_att_df[high_att_df["Subject"] == subj] if not high_att_df.empty else pd.DataFrame()
+            subj_df = processed_df[processed_df["Subject"] == subj] if not processed_df.empty else pd.DataFrame()
             
-            with st.expander(f"📘 **{subj}** — Teacher: **{teacher}** ({len(subj_high)} Needing Help)", expanded=True):
-                if not subj_high.empty:
-                    st.dataframe(subj_high[["Student Name", "Score", "Attendance Band", "Attention Level"]], use_container_width=True, hide_index=True)
+            with st.expander(f"📘 **{subj}** — Teacher: **{teacher}** ({len(subj_df)} Total Flagged)", expanded=False):
+                if not subj_df.empty:
+                    # Displays Student Name, Score/Marks, and Attendance side-by-side
+                    st.dataframe(
+                        subj_df[["Student Name", "Score / Marks", "Attendance (%)", "Attention Level"]], 
+                        use_container_width=True, 
+                        hide_index=True
+                    )
                 else:
-                    st.success(f"🎉 No high-attention students in {subj}!")
+                    st.success(f"🎉 No students requiring attention in {subj}!")
 
     with tab3:
         st.dataframe(df, use_container_width=True)

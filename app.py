@@ -33,7 +33,7 @@ if uploaded_file is not None:
 
     global_att_col = next((c for c in df.columns if any(k in c.lower() for k in ["attendance", "kehadiran", "att_overall", "overall att"])), None)
     
-    # Detect global or subject participation / collaborative columns
+    # Detect global participation / collaborative columns
     part_col = next((c for c in df.columns if "participation" in c.lower()), None)
     collab_col = next((c for c in df.columns if "collaborative" in c.lower() or "collab" in c.lower()), None)
 
@@ -70,7 +70,6 @@ if uploaded_file is not None:
             if not att_col:
                 att_col = global_att_col
             
-            # Fall back to global participation/collaborative columns if subject-specific not found
             final_part_col = subj_part_col if subj_part_col else part_col
             final_collab_col = subj_collab_col if subj_collab_col else collab_col
 
@@ -129,16 +128,19 @@ if uploaded_file is not None:
         "Attention Level": st.column_config.Column("Attention Level", width="large")
     }
 
-    # Summary Metrics
-    high_count = len(processed_df[processed_df["Attention Level"].str.contains("High")]) if not processed_df.empty else 0
-    mod_count = len(processed_df[processed_df["Attention Level"].str.contains("Moderate")]) if not processed_df.empty else 0
-    low_count = len(processed_df[processed_df["Attention Level"].str.contains("Minimal")]) if not processed_df.empty else 0
+    # Summary Metrics (Unique Student Counts)
+    if not processed_df.empty:
+        high_students = processed_df[processed_df["Attention Level"].str.contains("High")]["Student Name"].nunique()
+        mod_students = processed_df[processed_df["Attention Level"].str.contains("Moderate")]["Student Name"].nunique()
+        low_students = processed_df[processed_df["Attention Level"].str.contains("Minimal")]["Student Name"].nunique()
+    else:
+        high_students, mod_students, low_students = 0, 0, 0
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Students Processed", len(df))
-    col2.metric("🚨 High Attention (<40)", high_count)
-    col3.metric("🟡 Moderate Attention (<60)", mod_count)
-    col4.metric("🔵 Minimal Attention (<80)", low_count)
+    col2.metric("🚨 High Attention (<40)", high_students)
+    col3.metric("🟡 Moderate Attention (<60)", mod_students)
+    col4.metric("🔵 Minimal Attention (<80)", low_students)
 
     st.markdown("---")
 

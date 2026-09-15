@@ -4,8 +4,8 @@ import pandas as pd
 st.set_page_config(page_title="School Admin Dashboard", layout="wide")
 st.title("🏫 9-Subject Student Categorization & Teacher Support Portal")
 
-# Default 9 Subjects and assigned Primary Teachers
-DEFAULT_SUBJECT_TEACHERS = {
+# Fixed 9 Subjects mapped to Teachers
+SUBJECT_TEACHERS = {
     "Physics": "Dr. Alex",
     "Chemistry": "Ms. Sarah",
     "Biology": "Mr. John",
@@ -17,75 +17,65 @@ DEFAULT_SUBJECT_TEACHERS = {
     "Islamic Education": "Ustaz Ahmad"
 }
 
-# Sidebar configuration for available support teachers
-st.sidebar.header("⚙️ Teacher Roster & Subject Mapping")
-st.sidebar.caption("Adjust primary teachers per subject if needed:")
-
+# Sidebar configuration
+st.sidebar.header("⚙️ Teacher Roster Mapping")
 subject_teachers = {}
-for subj, default_teacher in DEFAULT_SUBJECT_TEACHERS.items():
+for subj, default_teacher in SUBJECT_TEACHERS.items():
     subject_teachers[subj] = st.sidebar.text_input(f"{subj}:", value=default_teacher)
 
 uploaded_file = st.sidebar.file_uploader("Upload Student XLSX", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
-    
-    # 1. Clean Column Headers
     df.columns = df.columns.str.strip()
-    
-    # Auto-detect columns
+
+    # Detect Student Name Column
     name_col = next((c for c in df.columns if "name" in str(c).lower() or "student" in str(c).lower()), df.columns[0])
-    subj_col = next((c for c in df.columns if "subject" in str(c).lower() or "course" in str(c).lower()), None)
-    score_col = next((c for c in df.columns if "score" in str(c).lower() or "average" in str(c).lower() or "mark" in str(c).lower()), None)
-    att_col = next((c for c in df.columns if "attendance" in str(c).lower()), None)
-
     df["Student Name"] = df[name_col]
-    
-    if subj_col:
-        df["Subject"] = df[subj_col].astype(str).str.strip()
-    else:
-        st.sidebar.warning("⚠️ Select your Subject Column:")
-        df["Subject"] = st.sidebar.selectbox("Subject Column:", df.columns)
 
-    # 2. Student Categorization Logic
-    def categorize(row):
-        score = row.get(score_col, 0) if score_col else 0
-        attendance = row.get(att_col, 0) if att_col else 0
+    # Process High Attention Students across all columns
+    records = []
+    for idx, row in df.iterrows():
+        student_name = row["Student Name"]
         
-        try:
-            score = float(score)
-        except (ValueError, TypeError):
-            score = 0
+        for subj, teacher in subject_teachers.items():
+            # Find subject-related score & attendance columns flexibly
+            score_col = next((c for c in df.columns if subj.lower() in str(c).lower() and ("score" in str(c).lower() or "mark" in str(c).lower() or "grade" in str(c).lower())), None)
+            att_col = next((c for c in df.columns if subj.lower() in str(c).lower() and "attendance" in str(c).lower()), None)
             
-        try:
-            attendance = float(attendance)
-        except (ValueError, TypeError):
-            attendance = 0
+            # General fallback if subject names are directly in column headers
+            if not score_col:
+                score_col = next((c for c in df.columns if subj.lower() in str(c).lower()), None)
+            
+            score = row.get(score_col, 100) if score_col else 100
+            attendance = row.get(att_col, 100) if att_col else 100
 
-        if score < 50 or attendance < 70:
-            return "🚨 High Attention Required"
-        elif score >= 75 and attendance >= 85:
-            return "🌟 Excellent (Minimal Attention)"
-        else:
-            return "🟡 Moderate Monitoring"
+            try: score = float(score)
+            except: score = 100
+            try: attendance = float(attendance)
+            except: attendance = 100
 
-    df["Attention Level"] = df.apply(categorize, axis=1)
+            if score < 50 or attendance < 70:
+                records.append({
+                    "Student Name": student_name,
+                    "Subject": subj,
+                    "Assigned Teacher": teacher,
+                    "Score": score,
+                    "Attendance Band": attendance,
+                    "Attention Level": "🚨 High Attention Required"
+                })
 
-    # 3. Assign Teacher based on Subject Mapping
-    df["Assigned Teacher"] = df["Subject"].map(subject_teachers).fillna("Unassigned Teacher")
+    high_att_df = pd.DataFrame(records)
 
-    # 4. Metrics Dashboard
-    high_att_df = df[df["Attention Level"].str.contains("High")]
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Records", len(df))
-    col2.metric("🚨 High Attention", len(high_att_df))
-    col3.metric("🟡 Moderate", len(df[df["Attention Level"].str.contains("Moderate")]))
-    col4.metric("🌟 Excellent", len(df[df["Attention Level"].str.contains("Excellent")]))
+    # Top Metrics
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Students Processed", len(df))
+    col2.metric("Subjects Tracked", len(subject_teachers))
+    col3.metric("🚨 Total High Attention Tasks", len(high_att_df))
 
     st.markdown("---")
 
-    # 5. Tab Views for Workload Management
+    # Tabs
     tab1, tab2, tab3 = st.tabs([
         "👩‍🏫 Teacher Intervention Workload", 
         "📚 Subject-Wise High Attention Rosters", 
@@ -94,48 +84,32 @@ if uploaded_file is not None:
 
     with tab1:
         st.subheader("Teacher Intervention Workload Summary")
-        
-        # Summary table grouped by teacher
         teacher_summary = []
+        
         for subj, teacher in subject_teachers.items():
-            assigned_students = high_att_df[high_att_df["Subject"] == subj]
+            count = len(high_att_df[high_att_df["Subject"] == subj]) if not high_att_df.empty else 0
             teacher_summary.append({
                 "Assigned Teacher": teacher,
                 "Subject Taught": subj,
-                "Students Needing Support": len(assigned_students)
+                "Students Needing Support": count
             })
-            
-        summary_df = pd.DataFrame(teacher_summary)
-        summary_df = summary_df.sort_values(by="Students Needing Support", ascending=False)
+
+        summary_df = pd.DataFrame(teacher_summary).sort_values(by="Students Needing Support", ascending=False)
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
-        # Highlight highest priority teacher
-        if not summary_df.empty and summary_df["Students Needing Support"].iloc[0] > 0:
-            top_teacher = summary_df.iloc[0]["Assigned Teacher"]
-            top_subject = summary_df.iloc[0]["Subject Taught"]
-            top_count = summary_df.iloc[0]["Students Needing Support"]
-            st.error(f"⚠️ **Highest Priority Support Needed:** **{top_teacher}** ({top_subject}) has {top_count} high-attention students requiring immediate intervention.")
-
     with tab2:
-        st.subheader("Actionable Student Lists by Subject & Assigned Teacher")
-        
-        for subj in df["Subject"].unique():
-            subj_high = high_att_df[high_att_df["Subject"] == subj]
-            teacher_name = subject_teachers.get(subj, "Unassigned Teacher")
+        st.subheader("Actionable Student Lists by Subject")
+        for subj, teacher in subject_teachers.items():
+            subj_high = high_att_df[high_att_df["Subject"] == subj] if not high_att_df.empty else pd.DataFrame()
             
-            with st.expander(f"📘 **{subj}** — Assigned Teacher: **{teacher_name}** ({len(subj_high)} Students Needing Help)", expanded=True):
+            with st.expander(f"📘 **{subj}** — Teacher: **{teacher}** ({len(subj_high)} Needing Help)", expanded=True):
                 if not subj_high.empty:
-                    st.dataframe(
-                        subj_high[["Student Name", "Average / Overall Score", "Attendance Band", "Attention Level"]],
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    st.dataframe(subj_high[["Student Name", "Score", "Attendance Band", "Attention Level"]], use_container_width=True, hide_index=True)
                 else:
                     st.success(f"🎉 No high-attention students in {subj}!")
 
     with tab3:
-        st.subheader("Complete Records")
         st.dataframe(df, use_container_width=True)
 
 else:
-    st.info("👈 Upload your student Excel file via the sidebar to automatically match subjects and populate the teacher intervention workloads.")
+    st.info("👈 Upload your student Excel file via the sidebar to view teacher workloads.")

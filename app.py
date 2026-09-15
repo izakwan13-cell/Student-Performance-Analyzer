@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 
@@ -28,6 +29,7 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.str.strip()
 
+    # Detect Student Name Column
     name_col = next((c for c in df.columns if "name" in str(c).lower() or "student" in str(c).lower()), df.columns[0])
     df["Student Name"] = df[name_col]
 
@@ -36,19 +38,26 @@ if uploaded_file is not None:
         student_name = row["Student Name"]
         
         for subj, teacher in subject_teachers.items():
-            score_col = next((c for c in df.columns if subj.lower() in str(c).lower() and ("score" in str(c).lower() or "mark" in str(c).lower() or "grade" in str(c).lower())), None)
+            # Match score columns explicitly (excluding attendance)
+            score_col = next((c for c in df.columns if subj.lower() in str(c).lower() and "attendance" not in str(c).lower()), None)
             att_col = next((c for c in df.columns if subj.lower() in str(c).lower() and "attendance" in str(c).lower()), None)
             
+            # General fallback if subject header is exact
             if not score_col:
-                score_col = next((c for c in df.columns if subj.lower() in str(c).lower()), None)
+                score_col = next((c for c in df.columns if subj.lower() == str(c).lower().strip()), None)
             
-            score = row.get(score_col, 100) if score_col else 100
-            attendance = row.get(att_col, 100) if att_col else 100
+            # Fallback for attendance if subject-specific attendance column doesn't exist
+            if not att_col:
+                att_col = next((c for c in df.columns if "attendance" in str(c).lower() or "kehadiran" in str(c).lower()), None)
 
-            try: score = float(score)
-            except: score = 100
-            try: attendance = float(attendance)
-            except: attendance = 100
+            score_val = row.get(score_col, None) if score_col else None
+            att_val = row.get(att_col, 100) if att_col else 100
+
+            try: score = float(score_val) if pd.notnull(score_val) else 100.0
+            except: score = 100.0
+            
+            try: attendance = float(att_val) if pd.notnull(att_val) else 100.0
+            except: attendance = 100.0
 
             # Categorization Logic based on score thresholds
             if score < 40 or attendance < 70:
@@ -115,15 +124,17 @@ if uploaded_file is not None:
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
     with tab2:
-        st.subheader("Actionable Student Lists by Subject")
+        st.subheader("Actionable Student Lists by Subject (Sorted Lowest to Highest Score)")
         for subj, teacher in subject_teachers.items():
             subj_df = processed_df[processed_df["Subject"] == subj] if not processed_df.empty else pd.DataFrame()
             
             with st.expander(f"📘 **{subj}** — Teacher: **{teacher}** ({len(subj_df)} Total Flagged)", expanded=False):
                 if not subj_df.empty:
-                    # Displays Student Name, Score/Marks, and Attendance side-by-side
+                    # Sort scores from lowest to highest
+                    sorted_subj_df = subj_df.sort_values(by="Score / Marks", ascending=True)
+                    
                     st.dataframe(
-                        subj_df[["Student Name", "Score / Marks", "Attendance (%)", "Attention Level"]], 
+                        sorted_subj_df[["Student Name", "Score / Marks", "Attendance (%)", "Attention Level"]], 
                         use_container_width=True, 
                         hide_index=True
                     )

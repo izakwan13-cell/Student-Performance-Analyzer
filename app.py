@@ -33,32 +33,45 @@ if uploaded_file is not None:
     df["Student Name"] = df[name_col]
 
     records = []
+    
     for idx, row in df.iterrows():
         student_name = row["Student Name"]
         
         for subj, teacher in subject_teachers.items():
-            # Match score columns explicitly (excluding attendance)
-            score_col = next((c for c in df.columns if subj.lower() in str(c).lower() and "attendance" not in str(c).lower()), None)
-            att_col = next((c for c in df.columns if subj.lower() in str(c).lower() and "attendance" in str(c).lower()), None)
+            subj_clean = subj.lower()
             
-            # General fallback if subject header is exact
-            if not score_col:
-                score_col = next((c for c in df.columns if subj.lower() == str(c).lower().strip()), None)
-            
-            # Fallback for attendance if subject-specific attendance column doesn't exist
-            if not att_col:
-                att_col = next((c for c in df.columns if "attendance" in str(c).lower() or "kehadiran" in str(c).lower()), None)
+            # Find all columns matching this subject
+            matching_cols = [
+                c for c in df.columns 
+                if subj_clean in str(c).lower() 
+                or (subj_clean == "malay" and ("bm" in str(c).lower() or "melayu" in str(c).lower()))
+            ]
 
-            score_val = row.get(score_col, None) if score_col else None
-            att_val = row.get(att_col, 100) if att_col else 100
+            score_col = None
+            att_col = None
 
-            try: score = float(score_val) if pd.notnull(score_val) else 100.0
-            except: score = 100.0
-            
-            try: attendance = float(att_val) if pd.notnull(att_val) else 100.0
+            # Distinguish Score vs Attendance columns
+            for col in matching_cols:
+                c_lower = str(col).lower()
+                if any(k in c_lower for k in ["attendance", "kehadiran", "att"]):
+                    att_col = col
+                else:
+                    score_col = col
+
+            # Fallback for missing/unmatched columns
+            score_val = row[score_col] if score_col and pd.notnull(row[score_col]) else None
+            att_val = row[att_col] if att_col and pd.notnull(row[att_col]) else 100.0
+
+            if score_val is None:
+                continue
+
+            try: score = float(score_val)
+            except: score = 0.0
+
+            try: attendance = float(att_val)
             except: attendance = 100.0
 
-            # Categorization Logic based on score thresholds
+            # Categorization Logic
             if score < 40 or attendance < 70:
                 level = "🚨 High Attention Required (<40)"
             elif score < 60:
@@ -80,7 +93,7 @@ if uploaded_file is not None:
 
     processed_df = pd.DataFrame(records)
 
-    # Top Summary Metrics
+    # Summary Metrics
     high_count = len(processed_df[processed_df["Attention Level"].str.contains("High")]) if not processed_df.empty else 0
     mod_count = len(processed_df[processed_df["Attention Level"].str.contains("Moderate")]) if not processed_df.empty else 0
     low_count = len(processed_df[processed_df["Attention Level"].str.contains("Minimal")]) if not processed_df.empty else 0
@@ -115,7 +128,7 @@ if uploaded_file is not None:
                 "Subject Taught": subj,
                 "🚨 High (<40)": h_c,
                 "🟡 Moderate (<60)": m_c,
-                "🔵 Minimal (<80)": l_c,
+                "🔵 Minimal Attention (<80)": l_c,
                 "Total Flagged Students": h_c + m_c + l_c
             })
 
@@ -129,9 +142,8 @@ if uploaded_file is not None:
             
             with st.expander(f"📘 **{subj}** — Teacher: **{teacher}** ({len(subj_df)} Total Flagged)", expanded=False):
                 if not subj_df.empty:
-                    # Sort scores from lowest to highest
+                    # Sort scores lowest to highest
                     sorted_subj_df = subj_df.sort_values(by="Score / Marks", ascending=True)
-                    
                     st.dataframe(
                         sorted_subj_df[["Student Name", "Score / Marks", "Attendance (%)", "Attention Level"]], 
                         use_container_width=True, 

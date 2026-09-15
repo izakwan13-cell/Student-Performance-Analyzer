@@ -32,6 +32,10 @@ if uploaded_file is not None:
     df["Student Name"] = df[name_col]
 
     global_att_col = next((c for c in df.columns if any(k in c.lower() for k in ["attendance", "kehadiran", "att_overall", "overall att"])), None)
+    
+    # Detect global or subject participation / collaborative columns
+    part_col = next((c for c in df.columns if "participation" in c.lower()), None)
+    collab_col = next((c for c in df.columns if "collaborative" in c.lower() or "collab" in c.lower()), None)
 
     records = []
     
@@ -49,19 +53,31 @@ if uploaded_file is not None:
 
             score_col = None
             att_col = None
+            subj_part_col = None
+            subj_collab_col = None
 
             for col in matching_cols:
                 c_lower = col.lower()
                 if any(k in c_lower for k in ["attendance", "kehadiran", "att"]):
                     att_col = col
+                elif "participation" in c_lower:
+                    subj_part_col = col
+                elif "collaborative" in c_lower or "collab" in c_lower:
+                    subj_collab_col = col
                 else:
                     score_col = col
 
             if not att_col:
                 att_col = global_att_col
+            
+            # Fall back to global participation/collaborative columns if subject-specific not found
+            final_part_col = subj_part_col if subj_part_col else part_col
+            final_collab_col = subj_collab_col if subj_collab_col else collab_col
 
             score_val = row[score_col] if score_col and pd.notnull(row[score_col]) else None
             att_val = row[att_col] if att_col and pd.notnull(row[att_col]) else None
+            part_val = row[final_part_col] if final_part_col and pd.notnull(row[final_part_col]) else "N/A"
+            collab_val = row[final_collab_col] if final_collab_col and pd.notnull(row[final_collab_col]) else "N/A"
 
             if score_val is None:
                 continue
@@ -96,16 +112,20 @@ if uploaded_file is not None:
                     "Assigned Teacher": teacher,
                     "Score / Marks": int(score) if score.is_integer() else score,
                     "Attendance (%)": int(attendance) if attendance.is_integer() else attendance,
+                    "Participation Level": part_val,
+                    "Collaborative in Class": collab_val,
                     "Attention Level": level
                 })
 
     processed_df = pd.DataFrame(records)
 
-    # Column configuration to center-align all table contents
+    # Center-align table headers and contents
     center_column_config = {
         "Student Name": st.column_config.Column("Student Name", width="medium"),
         "Score / Marks": st.column_config.NumberColumn("Score / Marks", alignment="center"),
         "Attendance (%)": st.column_config.NumberColumn("Attendance (%)", alignment="center"),
+        "Participation Level": st.column_config.Column("Participation Level", alignment="center"),
+        "Collaborative in Class": st.column_config.Column("Collaborative in Class", alignment="center"),
         "Attention Level": st.column_config.Column("Attention Level", width="large")
     }
 
@@ -160,7 +180,7 @@ if uploaded_file is not None:
                 if not subj_df.empty:
                     sorted_subj_df = subj_df.sort_values(by="Score / Marks", ascending=True)
                     st.dataframe(
-                        sorted_subj_df[["Student Name", "Score / Marks", "Attendance (%)", "Attention Level"]], 
+                        sorted_subj_df[["Student Name", "Score / Marks", "Attendance (%)", "Participation Level", "Collaborative in Class", "Attention Level"]], 
                         column_config=center_column_config,
                         use_container_width=True, 
                         hide_index=True

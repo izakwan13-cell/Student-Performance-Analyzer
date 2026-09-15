@@ -26,11 +26,14 @@ uploaded_file = st.sidebar.file_uploader("Upload Student XLSX", type=["xlsx", "x
 
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
-    df.columns = df.columns.str.strip()
+    df.columns = df.columns.astype(str).str.strip()
 
     # Detect Student Name Column
-    name_col = next((c for c in df.columns if "name" in str(c).lower() or "student" in str(c).lower()), df.columns[0])
+    name_col = next((c for c in df.columns if "name" in c.lower() or "student" in c.lower()), df.columns[0])
     df["Student Name"] = df[name_col]
+
+    # Detect global/overall attendance column if available as fallback
+    global_att_col = next((c for c in df.columns if any(k in c.lower() for k in ["attendance", "kehadiran", "att_overall", "overall att"])), None)
 
     records = []
     
@@ -40,38 +43,51 @@ if uploaded_file is not None:
         for subj, teacher in subject_teachers.items():
             subj_clean = subj.lower()
             
-            # Find all columns matching this subject
+            # Find subject-specific score and attendance columns
             matching_cols = [
                 c for c in df.columns 
-                if subj_clean in str(c).lower() 
-                or (subj_clean == "malay" and ("bm" in str(c).lower() or "melayu" in str(c).lower()))
+                if subj_clean in c.lower() 
+                or (subj_clean == "malay" and ("bm" in c.lower() or "melayu" in c.lower()))
             ]
 
             score_col = None
             att_col = None
 
-            # Distinguish Score vs Attendance columns
             for col in matching_cols:
-                c_lower = str(col).lower()
+                c_lower = col.lower()
                 if any(k in c_lower for k in ["attendance", "kehadiran", "att"]):
                     att_col = col
                 else:
                     score_col = col
 
-            # Fallback for missing/unmatched columns
+            # If no subject-specific attendance column found, use global attendance column
+            if not att_col:
+                att_col = global_att_col
+
+            # Extract values
             score_val = row[score_col] if score_col and pd.notnull(row[score_col]) else None
-            att_val = row[att_col] if att_col and pd.notnull(row[att_col]) else 100.0
+            att_val = row[att_col] if att_col and pd.notnull(row[att_col]) else None
 
             if score_val is None:
                 continue
 
-            try: score = float(score_val)
-            except: score = 0.0
+            # Safe numeric conversion for Score
+            try:
+                score = float(score_val)
+            except (ValueError, TypeError):
+                score = 0.0
 
-            try: attendance = float(att_val)
-            except: attendance = 100.0
+            # Safe numeric conversion for Attendance (handles "85%", decimals, strings)
+            try:
+                if isinstance(att_val, str):
+                    att_val = att_val.replace("%", "").strip()
+                attendance = float(att_val)
+                if attendance <= 1.0 and attendance > 0:
+                    attendance = attendance * 100  # Convert decimal (0.85 -> 85)
+            except (ValueError, TypeError):
+                attendance = 0.0
 
-            # Categorization Logic
+            # Categorization Logic based on thresholds
             if score < 40 or attendance < 70:
                 level = "🚨 High Attention Required (<40)"
             elif score < 60:
@@ -142,7 +158,6 @@ if uploaded_file is not None:
             
             with st.expander(f"📘 **{subj}** — Teacher: **{teacher}** ({len(subj_df)} Total Flagged)", expanded=False):
                 if not subj_df.empty:
-                    # Sort scores lowest to highest
                     sorted_subj_df = subj_df.sort_values(by="Score / Marks", ascending=True)
                     st.dataframe(
                         sorted_subj_df[["Student Name", "Score / Marks", "Attendance (%)", "Attention Level"]], 

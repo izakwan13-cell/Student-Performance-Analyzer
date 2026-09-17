@@ -50,17 +50,17 @@ if uploaded_file is not None:
         X_input = pd.get_dummies(df, drop_first=True)
         X_input = X_input.reindex(columns=model_features, fill_value=0)
         
-        # Predict Attention Level via ML Model
+        # Predict Overall Student Attention Level via ML Model
         df["Attention Level"] = model.predict(X_input)
     else:
         st.warning("⚠️ ML Model artefacts ('student_model.pkl' & 'model_features.pkl') not found! Falling back to rule-based logic.")
         # Rule-based fallback
         def get_level(row):
             score = row.get("Average / Overall Score", 100)
-            if score < 40: return "🚨 High Attention Required (<40)"
-            elif score < 60: return "🟡 Moderate Attention Required (<60)"
-            elif score < 80: return "🔵 Minimal Attention Needed (<80)"
-            return "🌟 Excellent / On Track"
+            if score < 40: return "🚨 High Attention Required"
+            elif score < 60: return "🟡 Moderate Attention Required"
+            elif score < 80: return "🔵 Minimal Attention Needed"
+            return "🌟 On Track"
         df["Attention Level"] = df.apply(get_level, axis=1)
 
     # Global attendance/participation detection
@@ -72,7 +72,7 @@ if uploaded_file is not None:
     
     for idx, row in df.iterrows():
         student_name = row["Student Name"]
-        attention_pred = row["Attention Level"]
+        global_ml_level = row["Attention Level"]
         
         for subj, teacher in subject_teachers.items():
             subj_clean = subj.lower()
@@ -124,6 +124,16 @@ if uploaded_file is not None:
             except (ValueError, TypeError):
                 attendance = 0.0
 
+            # Dynamic Subject Level Calculation combining Subject Performance & Global ML status
+            if score < 40 or attendance < 70 or "High" in str(global_ml_level):
+                subj_level = "🚨 High Attention Required"
+            elif score < 60 or attendance < 85 or "Moderate" in str(global_ml_level):
+                subj_level = "🟡 Moderate Attention Required"
+            elif score < 80:
+                subj_level = "🔵 Minimal Attention Needed"
+            else:
+                subj_level = "🌟 On Track"
+
             records.append({
                 "Student Name": student_name,
                 "Subject": subj,
@@ -132,7 +142,7 @@ if uploaded_file is not None:
                 "Attendance (%)": int(attendance) if attendance.is_integer() else attendance,
                 "Participation Level": part_val,
                 "Collaborative in Class": collab_val,
-                "Attention Level": attention_pred
+                "Attention Level": subj_level
             })
 
     processed_df = pd.DataFrame(records)

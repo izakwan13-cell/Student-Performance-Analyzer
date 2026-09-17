@@ -1,8 +1,21 @@
-import streamlit as st
+\import streamlit as st
 import pandas as pd
+import joblib
 
 st.set_page_config(page_title="School Admin Dashboard", layout="wide")
 st.title("🏫 9-Subject Student Categorization & Teacher Support Portal")
+
+# Load ML Assets
+@st.cache_resource
+def load_ml_assets():
+    try:
+        model = joblib.load("student_model.pkl")
+        features = joblib.load("model_features.pkl")
+        return model, features
+    except FileNotFoundError:
+        return None, None
+
+model, model_features = load_ml_assets()
 
 # 9 Subjects mapped to Teachers
 SUBJECT_TEACHERS = {
@@ -31,9 +44,27 @@ if uploaded_file is not None:
     name_col = next((c for c in df.columns if "name" in c.lower() or "student" in c.lower()), df.columns[0])
     df["Student Name"] = df[name_col]
 
+    # --- ML PREDICTION SECTION ---
+    if model is not None and model_features is not None:
+        # Align input columns with trained model features
+        X_input = pd.get_dummies(df, drop_first=True)
+        X_input = X_input.reindex(columns=model_features, fill_value=0)
+        
+        # Predict Attention Level via ML Model
+        df["Attention Level"] = model.predict(X_input)
+    else:
+        st.warning("⚠️ ML Model artefacts ('student_model.pkl' & 'model_features.pkl') not found! Falling back to rule-based logic.")
+        # Rule-based fallback
+        def get_level(row):
+            score = row.get("Average / Overall Score", 100)
+            if score < 40: return "🚨 High Attention Required (<40)"
+            elif score < 60: return "🟡 Moderate Attention Required (<60)"
+            elif score < 80: return "🔵 Minimal Attention Needed (<80)"
+            return "🌟 Excellent / On Track"
+        df["Attention Level"] = df.apply(get_level, axis=1)
+
+    # Global attendance/participation detection
     global_att_col = next((c for c in df.columns if any(k in c.lower() for k in ["attendance", "kehadiran", "att_overall", "overall att"])), None)
-    
-    # Detect global participation / collaborative columns
     part_col = next((c for c in df.columns if "participation" in c.lower()), None)
     collab_col = next((c for c in df.columns if "collaborative" in c.lower() or "collab" in c.lower()), None)
 
@@ -41,6 +72,7 @@ if uploaded_file is not None:
     
     for idx, row in df.iterrows():
         student_name = row["Student Name"]
+        attention_pred = row["Attention Level"]
         
         for subj, teacher in subject_teachers.items():
             subj_clean = subj.lower()
@@ -51,10 +83,7 @@ if uploaded_file is not None:
                 or (subj_clean == "malay" and ("bm" in c.lower() or "melayu" in c.lower()))
             ]
 
-            score_col = None
-            att_col = None
-            subj_part_col = None
-            subj_collab_col = None
+            score_col, att_col, subj_part_col, subj_collab_col = None, None, None, None
 
             for col in matching_cols:
                 c_lower = col.lower()
@@ -90,35 +119,25 @@ if uploaded_file is not None:
                 if isinstance(att_val, str):
                     att_val = att_val.replace("%", "").strip()
                 attendance = float(att_val)
-                if attendance <= 1.0 and attendance > 0:
+                if 0 < attendance <= 1.0:
                     attendance = attendance * 100
             except (ValueError, TypeError):
                 attendance = 0.0
 
-            if score < 40 or attendance < 70:
-                level = "🚨 High Attention Required (<40)"
-            elif score < 60:
-                level = "🟡 Moderate Attention Required (<60)"
-            elif score < 80:
-                level = "🔵 Minimal Attention Needed (<80)"
-            else:
-                level = "🌟 Excellent / On Track"
-
-            if score < 80 or attendance < 70:
-                records.append({
-                    "Student Name": student_name,
-                    "Subject": subj,
-                    "Assigned Teacher": teacher,
-                    "Score / Marks": int(score) if score.is_integer() else score,
-                    "Attendance (%)": int(attendance) if attendance.is_integer() else attendance,
-                    "Participation Level": part_val,
-                    "Collaborative in Class": collab_val,
-                    "Attention Level": level
-                })
+            records.append({
+                "Student Name": student_name,
+                "Subject": subj,
+                "Assigned Teacher": teacher,
+                "Score / Marks": int(score) if score.is_integer() else score,
+                "Attendance (%)": int(attendance) if attendance.is_integer() else attendance,
+                "Participation Level": part_val,
+                "Collaborative in Class": collab_val,
+                "Attention Level": attention_pred
+            })
 
     processed_df = pd.DataFrame(records)
 
-    # Center-align table headers and contents
+    # Column Configurations
     center_column_config = {
         "Student Name": st.column_config.Column("Student Name", width="medium"),
         "Score / Marks": st.column_config.NumberColumn("Score / Marks", alignment="center"),
@@ -128,7 +147,7 @@ if uploaded_file is not None:
         "Attention Level": st.column_config.Column("Attention Level", width="large")
     }
 
-    # Summary Metrics (Unique Student Counts)
+    # Summary Metrics
     if not processed_df.empty:
         high_students = processed_df[processed_df["Attention Level"].str.contains("High")]["Student Name"].nunique()
         mod_students = processed_df[processed_df["Attention Level"].str.contains("Moderate")]["Student Name"].nunique()
@@ -138,9 +157,9 @@ if uploaded_file is not None:
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Students Processed", len(df))
-    col2.metric("🚨 High Attention (<40)", high_students)
-    col3.metric("🟡 Moderate Attention (<60)", mod_students)
-    col4.metric("🔵 Minimal Attention (<80)", low_students)
+    col2.metric("🚨 High Attention", high_students)
+    col3.metric("🟡 Moderate Attention", mod_students)
+    col4.metric("🔵 Minimal Attention", low_students)
 
     st.markdown("---")
 
@@ -164,21 +183,21 @@ if uploaded_file is not None:
             teacher_summary.append({
                 "Assigned Teacher": teacher,
                 "Subject Taught": subj,
-                "🚨 High (<40)": h_c,
-                "🟡 Moderate (<60)": m_c,
-                "🔵 Minimal Attention (<80)": l_c,
+                "🚨 High Attention": h_c,
+                "🟡 Moderate Attention": m_c,
+                "🔵 Minimal Attention": l_c,
                 "Total Flagged Students": h_c + m_c + l_c
             })
 
-        summary_df = pd.DataFrame(teacher_summary).sort_values(by="🚨 High (<40)", ascending=False)
+        summary_df = pd.DataFrame(teacher_summary).sort_values(by="🚨 High Attention", ascending=False)
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
     with tab2:
-        st.subheader("Actionable Student Lists by Subject (Sorted Lowest to Highest Score)")
+        st.subheader("Actionable Student Lists by Subject")
         for subj, teacher in subject_teachers.items():
             subj_df = processed_df[processed_df["Subject"] == subj] if not processed_df.empty else pd.DataFrame()
             
-            with st.expander(f"📘 **{subj}** — Teacher: **{teacher}** ({len(subj_df)} Total Flagged)", expanded=False):
+            with st.expander(f"📘 **{subj}** — Teacher: **{teacher}** ({len(subj_df)} Processed)", expanded=False):
                 if not subj_df.empty:
                     sorted_subj_df = subj_df.sort_values(by="Score / Marks", ascending=True)
                     st.dataframe(
@@ -188,7 +207,7 @@ if uploaded_file is not None:
                         hide_index=True
                     )
                 else:
-                    st.success(f"🎉 No students requiring attention in {subj}!")
+                    st.success(f"🎉 No students logged in {subj}!")
 
     with tab3:
         st.dataframe(df, use_container_width=True)

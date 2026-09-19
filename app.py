@@ -1,19 +1,28 @@
-import streamlit as st
-import pandas as pd
+import os
 import joblib
+import pandas as pd
+import streamlit as st
 
 st.set_page_config(page_title="School Admin Dashboard", layout="wide")
 st.title("🏫 9-Subject Student Categorization & Teacher Support Portal")
 
-# Load ML Assets
+# Load ML Assets with environment fallback checking
 @st.cache_resource
 def load_ml_assets():
-    try:
-        model = joblib.load("student_model.pkl")
-        features = joblib.load("model_features.pkl")
-        return model, features
-    except FileNotFoundError:
-        return None, None
+    model_paths = ["student_model.pkl", "/kaggle/working/student_model.pkl"]
+    feature_paths = ["model_features.pkl", "/kaggle/working/model_features.pkl"]
+
+    model_file = next((p for p in model_paths if os.path.exists(p)), None)
+    feature_file = next((p for p in feature_paths if os.path.exists(p)), None)
+
+    if model_file and feature_file:
+        try:
+            model = joblib.load(model_file)
+            features = joblib.load(feature_file)
+            return model, features
+        except Exception:
+            return None, None
+    return None, None
 
 model, model_features = load_ml_assets()
 
@@ -46,15 +55,11 @@ if uploaded_file is not None:
 
     # --- ML PREDICTION SECTION ---
     if model is not None and model_features is not None:
-        # Align input columns with trained model features
         X_input = pd.get_dummies(df, drop_first=True)
         X_input = X_input.reindex(columns=model_features, fill_value=0)
-        
-        # Predict Overall Student Attention Level via ML Model
         df["Attention Level"] = model.predict(X_input)
     else:
         st.warning("⚠️ ML Model artefacts ('student_model.pkl' & 'model_features.pkl') not found! Falling back to rule-based logic.")
-        # Rule-based fallback
         def get_level(row):
             score = row.get("Average / Overall Score", 100)
             if score < 40: return "🚨 High Attention Required"
@@ -63,20 +68,17 @@ if uploaded_file is not None:
             return "🌟 On Track"
         df["Attention Level"] = df.apply(get_level, axis=1)
 
-    # Global attendance/participation detection
     global_att_col = next((c for c in df.columns if any(k in c.lower() for k in ["attendance", "kehadiran", "att_overall", "overall att"])), None)
     part_col = next((c for c in df.columns if "participation" in c.lower()), None)
     collab_col = next((c for c in df.columns if "collaborative" in c.lower() or "collab" in c.lower()), None)
 
     records = []
-    
     for idx, row in df.iterrows():
         student_name = row["Student Name"]
         global_ml_level = row["Attention Level"]
-        
+
         for subj, teacher in subject_teachers.items():
             subj_clean = subj.lower()
-            
             matching_cols = [
                 c for c in df.columns 
                 if subj_clean in c.lower() 
@@ -98,7 +100,7 @@ if uploaded_file is not None:
 
             if not att_col:
                 att_col = global_att_col
-            
+
             final_part_col = subj_part_col if subj_part_col else part_col
             final_collab_col = subj_collab_col if subj_collab_col else collab_col
 
@@ -124,7 +126,6 @@ if uploaded_file is not None:
             except (ValueError, TypeError):
                 attendance = 0.0
 
-            # Dynamic Subject Level Calculation combining Subject Performance & Global ML status
             if score < 40 or attendance < 70 or "High" in str(global_ml_level):
                 subj_level = "🚨 High Attention Required"
             elif score < 60 or attendance < 85 or "Moderate" in str(global_ml_level):
@@ -147,7 +148,6 @@ if uploaded_file is not None:
 
     processed_df = pd.DataFrame(records)
 
-    # Column Configurations
     center_column_config = {
         "Student Name": st.column_config.Column("Student Name", width="medium"),
         "Score / Marks": st.column_config.NumberColumn("Score / Marks", alignment="center"),
@@ -157,7 +157,6 @@ if uploaded_file is not None:
         "Attention Level": st.column_config.Column("Attention Level", width="large")
     }
 
-    # Summary Metrics
     if not processed_df.empty:
         high_students = processed_df[processed_df["Attention Level"].str.contains("High")]["Student Name"].nunique()
         mod_students = processed_df[processed_df["Attention Level"].str.contains("Moderate")]["Student Name"].nunique()
@@ -182,10 +181,10 @@ if uploaded_file is not None:
     with tab1:
         st.subheader("Teacher Intervention Workload Breakdown")
         teacher_summary = []
-        
+
         for subj, teacher in subject_teachers.items():
             subj_df = processed_df[processed_df["Subject"] == subj] if not processed_df.empty else pd.DataFrame()
-            
+
             h_c = len(subj_df[subj_df["Attention Level"].str.contains("High")]) if not subj_df.empty else 0
             m_c = len(subj_df[subj_df["Attention Level"].str.contains("Moderate")]) if not subj_df.empty else 0
             l_c = len(subj_df[subj_df["Attention Level"].str.contains("Minimal")]) if not subj_df.empty else 0
@@ -206,7 +205,7 @@ if uploaded_file is not None:
         st.subheader("Actionable Student Lists by Subject")
         for subj, teacher in subject_teachers.items():
             subj_df = processed_df[processed_df["Subject"] == subj] if not processed_df.empty else pd.DataFrame()
-            
+
             with st.expander(f"📘 **{subj}** — Teacher: **{teacher}** ({len(subj_df)} Processed)", expanded=False):
                 if not subj_df.empty:
                     sorted_subj_df = subj_df.sort_values(by="Score / Marks", ascending=True)
